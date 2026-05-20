@@ -1,0 +1,70 @@
+{
+  "name": "pos-bodega",
+  "version": "1.0.0",
+  "description": "Sistema de Punto de Venta para Bodega",
+  "author": "Jeyko28",
+  "main": "src/main/main.js",
+  "scripts": {
+    "dev:renderer": "vite",
+    "dev:main": "electron .",
+    "build:renderer": "vite build",
+    "build": "npm run build:renderer && electron-builder",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "electron-updater": "^6.1.7",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "react-router-dom": "^6.22.3",
+    "recharts": "^2.12.7",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.2.1",
+    "autoprefixer": "^10.4.19",
+    "electron": "^29.1.4",
+    "electron-builder": "^24.13.3",
+    "postcss": "^8.4.38",
+    "tailwindcss": "^3.4.3",
+    "vite": "^5.2.6"
+  },
+  "build": {
+    "appId": "com.posbodega.app",
+    "productName": "POS Bodega",
+    "copyright": "Copyright © 2026 POS Bodega",
+    "directories": {
+      "output": "dist-build"
+    },
+    "files": [
+      "src/main/**/*",
+      "src/database/**/*",
+      "dist-renderer/**/*",
+      "node_modules/**/*"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        }
+      ],
+      "icon": "assets/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "POS Bodega",
+      "installerIcon": "assets/icon.ico",
+      "uninstallerIcon": "assets/icon.ico",
+      "license": "LICENSE.txt"
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "Jeyko28",
+      "repo": "pos-bodega",
+      "releaseType": "release"
+    }
+  }
+}

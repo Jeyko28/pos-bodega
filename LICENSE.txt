@@ -1,0 +1,5 @@
+POS Bodega - Sistema de Punto de Venta
+Copyright (c) 2026 Jeyko28
+
+Software de uso privado. Todos los derechos reservados.
+Prohibida su distribución sin autorización del autor.
