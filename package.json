@@ -32,14 +32,20 @@
     "appId": "com.posbodega.app",
     "productName": "POS Bodega",
     "copyright": "Copyright © 2026 POS Bodega",
+    "asar": true,
     "directories": {
       "output": "dist-build"
     },
     "files": [
       "src/main/**/*",
       "src/database/**/*",
-      "dist-renderer/**/*",
       "node_modules/**/*"
+    ],
+    "extraFiles": [
+      {
+        "from": "dist-renderer",
+        "to": "dist-renderer"
+      }
     ],
     "win": {
       "target": [

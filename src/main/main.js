@@ -3,7 +3,7 @@ const path = require('path')
 const db   = require('../database/db')
 const { autoUpdater } = require('electron-updater')
 
-const isDev = process.env.NODE_ENV !== 'production'
+const isDev = !app.isPackaged
 
 // ─── Clave maestra de emergencia (solo el desarrollador la conoce) ─
 const CLAVE_MAESTRA = 'qH8MJbMk*'
@@ -22,7 +22,7 @@ function createWindow() {
   })
   isDev
     ? mainWindow.loadURL('http://localhost:5173')
-    : mainWindow.loadFile(path.join(__dirname,'../../dist-renderer/index.html'))
+    : mainWindow.loadFile(path.join(path.dirname(app.getPath('exe')), 'dist-renderer', 'index.html'))
   mainWindow.setMenuBarVisibility(false)
 
   if (!isDev) {
