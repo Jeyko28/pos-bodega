@@ -49,7 +49,20 @@ autoUpdater.on('update-not-available', () => {
   mainWindow?.webContents.send('update-status', { tipo:'not-available', msg:'La app está actualizada' })
 })
 autoUpdater.on('download-progress', (progress) => {
-  mainWindow?.webContents.send('update-status', { tipo:'downloading', msg:`Descargando... ${Math.round(progress.percent)}%`, progreso:Math.round(progress.percent) })
+  const mbTransferido = (progress.transferred / 1024 / 1024).toFixed(1)
+  const mbTotal       = (progress.total       / 1024 / 1024).toFixed(1)
+  const kbps          = progress.bytesPerSecond / 1024
+  const velocidad     = kbps > 1024
+    ? `${(kbps/1024).toFixed(1)} MB/s`
+    : `${Math.round(kbps)} KB/s`
+  mainWindow?.webContents.send('update-status', {
+    tipo:        'downloading',
+    msg:         `Descargando... ${Math.round(progress.percent)}%`,
+    progreso:    Math.round(progress.percent),
+    velocidad,
+    transferido: `${mbTransferido} MB`,
+    total:       `${mbTotal} MB`,
+  })
 })
 autoUpdater.on('update-downloaded', (info) => {
   mainWindow?.webContents.send('update-status', { tipo:'downloaded', msg:`v${info.version} lista para instalar`, version:info.version })

@@ -122,52 +122,85 @@ export default function App() {
         {showUpdate && updateInfo && (
           <div style={{
             position:'fixed', bottom:20, right:20, zIndex:1000,
-            background:'#111d2b', border:'1px solid rgba(16,185,129,0.4)',
-            borderRadius:16, padding:'16px 20px', width:320,
-            boxShadow:'0 8px 32px rgba(0,0,0,0.4)',
+            background:'#111d2b',
+            border:`1px solid ${updateInfo.tipo==='downloaded'?'rgba(16,185,129,0.5)':updateInfo.tipo==='downloading'?'rgba(14,165,233,0.4)':'rgba(16,185,129,0.4)'}`,
+            borderRadius:16, padding:'16px 20px', width:340,
+            boxShadow:'0 8px 32px rgba(0,0,0,0.5)',
             display:'flex', flexDirection:'column', gap:12,
           }}>
+            {/* Header */}
             <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start' }}>
               <div style={{ display:'flex', gap:10, alignItems:'center' }}>
                 <span style={{ fontSize:24 }}>
                   {updateInfo.tipo==='downloaded' ? '🎉' : updateInfo.tipo==='downloading' ? '⬇️' : '🔔'}
                 </span>
                 <div>
-                  <p style={{ fontWeight:700, fontSize:14, color:'#34d399' }}>
+                  <p style={{ fontWeight:700, fontSize:14, color:updateInfo.tipo==='downloading'?'#38bdf8':'#34d399' }}>
                     {updateInfo.tipo==='downloaded' ? '¡Actualización lista!' :
-                     updateInfo.tipo==='downloading' ? 'Descargando actualización' :
+                     updateInfo.tipo==='downloading' ? 'Descargando actualización...' :
                      'Nueva versión disponible'}
                   </p>
                   {updateInfo.version && (
-                    <p style={{ fontSize:12, color:'#637a93', marginTop:2 }}>Versión {updateInfo.version}</p>
+                    <p style={{ fontSize:12, color:'#637a93', marginTop:2 }}>
+                      Versión <strong style={{ color:'var(--text)' }}>{updateInfo.version}</strong>
+                    </p>
                   )}
                 </div>
               </div>
-              <button onClick={() => setShowUpdate(false)}
-                style={{ background:'none', border:'none', cursor:'pointer', color:'#637a93', fontSize:18, lineHeight:1 }}>✕</button>
+              {updateInfo.tipo !== 'downloading' && (
+                <button onClick={() => setShowUpdate(false)}
+                  style={{ background:'none', border:'none', cursor:'pointer', color:'#637a93', fontSize:18, lineHeight:1, flexShrink:0 }}>✕</button>
+              )}
             </div>
 
-            {/* Barra de progreso descarga */}
-            {updateInfo.tipo==='downloading' && updateInfo.progreso !== undefined && (
-              <div>
-                <div style={{ height:6, background:'var(--bg-700)', borderRadius:999, overflow:'hidden' }}>
-                  <div style={{ height:'100%', width:`${updateInfo.progreso}%`, background:'#10b981', borderRadius:999, transition:'width 0.3s' }} />
+            {/* Barra de progreso + velocidad */}
+            {updateInfo.tipo==='downloading' && (
+              <div style={{ display:'flex', flexDirection:'column', gap:6 }}>
+                <div style={{ height:8, background:'#1e3347', borderRadius:999, overflow:'hidden' }}>
+                  <div style={{
+                    height:'100%',
+                    width:`${updateInfo.progreso||0}%`,
+                    background:'linear-gradient(90deg,#0ea5e9,#10b981)',
+                    borderRadius:999,
+                    transition:'width 0.4s ease',
+                  }} />
                 </div>
-                <p style={{ fontSize:12, color:'#637a93', marginTop:4, textAlign:'right' }}>{updateInfo.progreso}%</p>
+                <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center' }}>
+                  <span style={{ fontSize:11, color:'#637a93' }}>
+                    {updateInfo.velocidad || 'Calculando...'}
+                  </span>
+                  <span style={{ fontSize:13, fontWeight:700, color:'#38bdf8', fontFamily:'JetBrains Mono' }}>
+                    {updateInfo.progreso||0}%
+                  </span>
+                </div>
+                {updateInfo.transferido && updateInfo.total && (
+                  <p style={{ fontSize:11, color:'#3a5068', textAlign:'center' }}>
+                    {updateInfo.transferido} de {updateInfo.total}
+                  </p>
+                )}
               </div>
             )}
 
-            <p style={{ fontSize:12, color:'#637a93' }}>
+            {/* Mensaje */}
+            <p style={{ fontSize:12, color:'#637a93', lineHeight:1.5 }}>
               {updateInfo.tipo==='downloaded'
-                ? 'La actualización se instalará cuando cierres la aplicación.'
-                : 'Se está descargando en segundo plano. No cierres la app.'}
+                ? 'La descarga terminó. Puedes instalar ahora o al cerrar la app.'
+                : updateInfo.tipo==='downloading'
+                ? '⚠️ No cierres la aplicación hasta que termine.'
+                : 'Se descargará automáticamente en segundo plano.'}
             </p>
 
             {updateInfo.tipo==='downloaded' && (
-              <button className="btn btn-primary" style={{ width:'100%', fontSize:13 }}
-                onClick={handleInstallUpdate}>
-                🔄 Instalar y reiniciar ahora
-              </button>
+              <div style={{ display:'flex', gap:10 }}>
+                <button className="btn btn-ghost" style={{ flex:1, fontSize:13 }}
+                  onClick={() => setShowUpdate(false)}>
+                  Después
+                </button>
+                <button className="btn btn-primary" style={{ flex:2, fontSize:13 }}
+                  onClick={handleInstallUpdate}>
+                  🔄 Instalar y reiniciar
+                </button>
+              </div>
             )}
           </div>
         )}
