@@ -2,10 +2,11 @@ import React, { useState, useEffect, useRef } from 'react'
 import { useSesion } from '../App'
 import VistaTicket from '../components/VistaTicket'
 
-const fmt = (n) => `S/ ${Number(n).toFixed(2)}`
+const fmt    = (n) => `S/ ${Number(n).toFixed(2)}`
+const fmtKg  = (n) => `${parseFloat(n).toFixed(3).replace(/\.?0+$/, '')} kg`
 
 const ICONOS = {
-  'Todas':'🛒','Bebidas':'🥤','Snacks':'🍿','Panadería':'🍞','Lácteos':'🥛',
+  'Todas':'🛒','Abarrotes':'🌾','Bebidas':'🥤','Snacks':'🍿','Panadería':'🍞','Lácteos':'🥛',
   'Limpieza':'🧹','Higiene':'🧴','Frutas':'🍎','Verduras':'🥦','Otros':'📦','General':'🏷️',
 }
 
@@ -17,6 +18,9 @@ const METODOS = [
   { id:'Fiado',    label:'Fiado',    icon:'📋', color:'#ef4444', desc:'Pago pendiente' },
 ]
 
+// Accesos rápidos de peso en kg
+const PESOS_RAPIDOS = [0.25, 0.5, 1, 2, 5]
+
 export default function POS() {
   const { usuario } = useSesion()
 
@@ -26,6 +30,11 @@ export default function POS() {
   const [categoriaActiva, setCatActiva]     = useState('Todas')
   const [carrito, setCarrito]               = useState([])
   const [cargando, setCargando]             = useState(false)
+
+  // Modal granel
+  const [modalGranel, setModalGranel]       = useState(null) // producto seleccionado
+  const [pesoInput, setPesoInput]           = useState('')
+  const pesoRef                             = useRef(null)
 
   // Descuento
   const [modalDescuento, setModalDescuento] = useState(false)
@@ -43,6 +52,12 @@ export default function POS() {
   const [clientesFiado, setClientesFiado]             = useState([])
   const [clienteSelFiado, setClienteSelFiado]         = useState(null)
   const [inputClienteFocused, setInputClienteFocused] = useState(false)
+
+  // Comprador SUNAT (para boletas > S/700)
+  const [compradorNombre, setCompradorNombre]     = useState('')
+  const [compradorDniRuc, setCompradorDniRuc]     = useState('')
+  const [guardarCliente, setGuardarCliente]       = useState(false)
+  const [mostrarComprador, setMostrarComprador]   = useState(false)
 
   // Ticket
   const [ventaRealizada, setVentaRealizada] = useState(null)
@@ -94,8 +109,23 @@ export default function POS() {
     return matchB && matchC
   })
 
-  function agregarAlCarrito(producto) {
+  // ── Agregar producto al carrito ──────────────────────────────────
+  function handleClickProducto(producto) {
     if (producto.stock <= 0) return
+    if (producto.tipo_venta === 'granel') {
+      // Granel: abrir modal de peso
+      setPesoInput('')
+      setModalGranel(producto)
+      setTimeout(() => pesoRef.current?.focus(), 100)
+    } else {
+      // Unidad: agregar directo
+      agregarUnidad(producto)
+    }
+    setBusqueda('')
+    searchRef.current?.focus()
+  }
+
+  function agregarUnidad(producto) {
     const precio = precioConOferta(producto)
     const oferta = getOfertaProducto(producto.id)
     setCarrito(prev => {
@@ -112,11 +142,60 @@ export default function POS() {
         precioOriginal: oferta ? producto.precio : null,
         oferta,
         cantidad: 1,
-        subtotal: precio
+        subtotal: precio,
+        tipo_venta: 'unidad',
+        unidad: 'unidad',
       }]
     })
-    setBusqueda('')
+  }
+
+  function agregarGranel() {
+    if (!modalGranel) return
+    const peso = parseFloat(pesoInput)
+    if (isNaN(peso) || peso <= 0) return
+    if (peso > modalGranel.stock) return
+
+    const precio = precioConOferta(modalGranel)
+    const oferta = getOfertaProducto(modalGranel.id)
+    const subtotal = parseFloat((precio * peso).toFixed(2))
+
+    setCarrito(prev => {
+      // Para granel, cada entrada puede tener distinto peso — sumamos si ya existe
+      const existe = prev.find(i => i.id === modalGranel.id && i.tipo_venta === 'granel')
+      if (existe) {
+        const nuevaCantidad = parseFloat((existe.cantidad + peso).toFixed(3))
+        if (nuevaCantidad > modalGranel.stock) return prev
+        return prev.map(i => i.id === modalGranel.id && i.tipo_venta === 'granel'
+          ? { ...i, cantidad: nuevaCantidad, subtotal: parseFloat((i.precio * nuevaCantidad).toFixed(2)) }
+          : i)
+      }
+      return [...prev, {
+        ...modalGranel,
+        precio,
+        precioOriginal: oferta ? modalGranel.precio : null,
+        oferta,
+        cantidad:   peso,
+        subtotal,
+        tipo_venta: 'granel',
+        unidad:     modalGranel.unidad || 'kg',
+      }]
+    })
+    setModalGranel(null)
+    setPesoInput('')
     searchRef.current?.focus()
+  }
+
+  function cambiarCantidadGranel(id, delta) {
+    // Para granel, delta puede ser 0.1 o -0.1
+    setCarrito(prev => prev
+      .map(i => {
+        if (i.id !== id || i.tipo_venta !== 'granel') return i
+        const nuevaCantidad = parseFloat((i.cantidad + delta).toFixed(3))
+        if (nuevaCantidad <= 0) return null
+        return { ...i, cantidad: nuevaCantidad, subtotal: parseFloat((i.precio * nuevaCantidad).toFixed(2)) }
+      })
+      .filter(Boolean)
+    )
   }
 
   function cambiarCantidad(id, delta) {
@@ -126,14 +205,10 @@ export default function POS() {
     )
   }
 
-  // ─── Cálculos ─────────────────────────────────────────────────────
-  // subtotalBruto: precio real sin ningún descuento (precio original × cantidad)
-  const subtotalBruto = carrito.reduce((s,i) => s + (i.precioOriginal||i.precio) * i.cantidad, 0)
-
-  // subtotalConOfertas: precios con ofertas pero sin descuento manual
+  // ── Cálculos ──────────────────────────────────────────────────────
+  const subtotalBruto    = carrito.reduce((s,i) => s + (i.precioOriginal||i.precio) * i.cantidad, 0)
   const subtotalConOfertas = carrito.reduce((s,i) => s + i.subtotal, 0)
 
-  // descuentoMonto: descuento manual aplicado sobre subtotalConOfertas
   const descuentoMonto = (() => {
     if (!descuentoAplicado) return 0
     if (descuentoAplicado.tipo==='porcentaje') return subtotalConOfertas*(descuentoAplicado.valor/100)
@@ -141,13 +216,9 @@ export default function POS() {
     return 0
   })()
 
-  // total para pagos normales (con ofertas y descuento manual)
   const totalConDescuento = Math.max(subtotalConOfertas - descuentoMonto, 0)
-
-  // totalFiado: precio real sin ningún descuento ni oferta
-  const totalFiado = subtotalBruto
-
-  const vuelto = parseFloat(montoRecibido) - totalConDescuento
+  const totalFiado        = subtotalBruto
+  const vuelto            = parseFloat(montoRecibido) - totalConDescuento
 
   const ahorroOfertas = carrito.reduce((s,i) => {
     if (i.precioOriginal) return s + ((i.precioOriginal - i.precio) * i.cantidad)
@@ -167,6 +238,10 @@ export default function POS() {
   function abrirPago() {
     setMetodoPago(null); setMontoRecibido('')
     setClienteSelFiado(null); setBusquedaCliente('')
+    setCompradorNombre(''); setCompradorDniRuc('')
+    setGuardarCliente(false)
+    const tipoComp = config.tipo_comprobante || 'ticket'
+    setMostrarComprador(tipoComp !== 'ticket' && totalConDescuento >= 700)
     setModalPago(true)
   }
 
@@ -177,27 +252,30 @@ export default function POS() {
 
     setCargando(true)
     try {
-      const esFiado = metodoPago === 'Fiado'
-
-      // ── Fiado: precio real sin descuentos ──
-      // ── Otros métodos: precio con ofertas y descuento ──
-      const montoFinal  = esFiado ? totalFiado : (metodoPago==='Efectivo' ? parseFloat(montoRecibido) : totalConDescuento)
-      const itemsVenta  = esFiado
-        ? carrito.map(i => ({ ...i, precio: i.precioOriginal||i.precio, subtotal: (i.precioOriginal||i.precio)*i.cantidad }))
+      const esFiado    = metodoPago === 'Fiado'
+      const montoFinal = esFiado ? totalFiado : (metodoPago==='Efectivo' ? parseFloat(montoRecibido) : totalConDescuento)
+      const itemsVenta = esFiado
+        ? carrito.map(i => ({ ...i, precio: i.precioOriginal||i.precio, subtotal: parseFloat(((i.precioOriginal||i.precio)*i.cantidad).toFixed(2)) }))
         : carrito
 
+      // Datos del comprador — si hay cliente fiado, usar sus datos
+      const nombreFinal = clienteSelFiado?.nombre || compradorNombre.trim() || null
+      const dniFinal    = clienteSelFiado?.dni_ruc || compradorDniRuc.trim() || null
+
       const result = await window.electronAPI.realizarVenta({
-        items:         itemsVenta,
-        montoRecibido: montoFinal,
+        items:              itemsVenta,
+        montoRecibido:      montoFinal,
         metodoPago,
-        descuento:     esFiado ? 0 : (descuentoAplicado?.valor || 0),
-        tipoDescuento: esFiado ? 'ninguno' : (descuentoAplicado?.tipo || 'ninguno'),
-        usuarioId:     usuario?.id || null,
-        clienteId:     clienteSelFiado?.id || null,
+        descuento:          esFiado ? 0 : (descuentoAplicado?.valor || 0),
+        tipoDescuento:      esFiado ? 'ninguno' : (descuentoAplicado?.tipo || 'ninguno'),
+        usuarioId:          usuario?.id || null,
+        clienteId:          clienteSelFiado?.id || null,
         esFiado,
+        compradorNombre:    nombreFinal,
+        compradorDniRuc:    dniFinal,
+        guardarCliente:     guardarCliente && !clienteSelFiado,
       })
 
-      // Items del ticket
       const itemsTicket = itemsVenta.map(i => ({
         nombre_producto: i.nombre,
         cantidad:        i.cantidad,
@@ -205,27 +283,35 @@ export default function POS() {
         precio:          esFiado ? (i.precioOriginal||i.precio) : i.precio,
         precioOriginal:  esFiado ? null : (i.precioOriginal || null),
         oferta:          esFiado ? null : (i.oferta || null),
-        subtotal:        esFiado ? (i.precioOriginal||i.precio)*i.cantidad : i.subtotal,
+        subtotal:        i.subtotal,
+        tipo_venta:      i.tipo_venta || 'unidad',
+        unidad:          i.unidad     || 'unidad',
       }))
 
       setVentaRealizada({
-        id:             result.ventaId,
-        total:          result.total,
-        subtotal_bruto: result.subtotalBruto,
-        descuento:      result.descuentoMonto,
-        tipo_descuento: esFiado ? 'ninguno' : (descuentoAplicado?.tipo || 'ninguno'),
-        vuelto:         result.vuelto,
-        monto_recibido: montoFinal,
-        metodo_pago:    metodoPago,
-        cliente:        clienteSelFiado?.nombre || null,
-        es_fiado:       esFiado,
-        fecha:          new Date().toISOString(),
-        items:          itemsTicket,
+        id:               result.ventaId,
+        total:            result.total,
+        subtotal_bruto:   result.subtotalBruto,
+        descuento:        result.descuentoMonto,
+        tipo_descuento:   esFiado ? 'ninguno' : (descuentoAplicado?.tipo || 'ninguno'),
+        vuelto:           result.vuelto,
+        monto_recibido:   montoFinal,
+        metodo_pago:      metodoPago,
+        cliente:          clienteSelFiado?.nombre || null,
+        es_fiado:         esFiado,
+        fecha:            new Date().toISOString(),
+        items:            itemsTicket,
+        tipo_comprobante: result.tipoComprobante,
+        numero_comprobante: result.numeroComprobante,
+        comprador_nombre: nombreFinal,
+        comprador_dni_ruc: dniFinal,
       })
 
       setCarrito([]); setDescuentoAplicado(null)
       setMontoRecibido(''); setMetodoPago(null)
       setClienteSelFiado(null); setBusquedaCliente('')
+      setCompradorNombre(''); setCompradorDniRuc('')
+      setGuardarCliente(false); setMostrarComprador(false)
       setModalPago(false)
       await cargarTodo()
     } catch(e) { console.error(e) }
@@ -242,6 +328,15 @@ export default function POS() {
   }
 
   const metodoActivo = METODOS.find(m => m.id === metodoPago)
+
+  // Label de cantidad según tipo
+  function labelCantidad(item) {
+    if (item.tipo_venta === 'granel') {
+      const c = parseFloat(item.cantidad)
+      return `${c % 1 === 0 ? c.toFixed(0) : c.toFixed(3).replace(/0+$/, '')} ${item.unidad}`
+    }
+    return `${item.cantidad}`
+  }
 
   return (
     <div style={{ display:'flex', height:'100vh', overflow:'hidden' }}>
@@ -274,7 +369,7 @@ export default function POS() {
           <input ref={searchRef} className="input" style={{ paddingLeft:42, fontSize:15 }}
             placeholder="Buscar producto o escanear código de barras..."
             value={busqueda} onChange={e => { setBusqueda(e.target.value); setCatActiva('Todas') }}
-            onKeyDown={e => { if (e.key==='Enter' && productosFiltrados.length===1) agregarAlCarrito(productosFiltrados[0]) }} />
+            onKeyDown={e => { if (e.key==='Enter' && productosFiltrados.length===1) handleClickProducto(productosFiltrados[0]) }} />
           {busqueda && <button onClick={() => { setBusqueda(''); searchRef.current?.focus() }} style={{ position:'absolute', right:12, top:'50%', transform:'translateY(-50%)', background:'none', border:'none', cursor:'pointer', color:'#637a93', fontSize:18 }}>✕</button>}
         </div>
 
@@ -282,7 +377,7 @@ export default function POS() {
         <div style={{ display:'flex', gap:8, overflowX:'auto', paddingBottom:4, flexShrink:0 }}>
           {categoriasConProductos.map(cat => {
             const isActive = categoriaActiva===cat
-            const count = cat==='Todas' ? productos.length : productos.filter(p=>p.categoria===cat).length
+            const count    = cat==='Todas' ? productos.length : productos.filter(p=>p.categoria===cat).length
             return (
               <button key={cat} onClick={() => { setCatActiva(cat); setBusqueda('') }}
                 style={{ display:'flex', alignItems:'center', gap:6, padding:'7px 14px', borderRadius:999, flexShrink:0,
@@ -303,29 +398,44 @@ export default function POS() {
             const oferta      = getOfertaProducto(p.id)
             const precioFinal = precioConOferta(p)
             const tieneOferta = !!oferta
+            const esGranel    = p.tipo_venta === 'granel'
             return (
-              <button key={p.id} onClick={() => agregarAlCarrito(p)} disabled={p.stock<=0}
+              <button key={p.id} onClick={() => handleClickProducto(p)} disabled={p.stock<=0}
                 style={{ background: p.stock<=0?'rgba(22,32,48,0.5)':'var(--bg-card)',
-                  border: tieneOferta ? '1px solid rgba(16,185,129,0.5)' : '1px solid var(--border)',
+                  border: tieneOferta ? '1px solid rgba(16,185,129,0.5)' : esGranel ? '1px solid rgba(14,165,233,0.3)' : '1px solid var(--border)',
                   borderRadius:12, padding:14, textAlign:'left', cursor:p.stock<=0?'not-allowed':'pointer',
                   transition:'all 0.15s', opacity:p.stock<=0?0.5:1, position:'relative' }}
                 onMouseEnter={e => { if(p.stock>0) e.currentTarget.style.borderColor='#10b981' }}
-                onMouseLeave={e => { e.currentTarget.style.borderColor=tieneOferta?'rgba(16,185,129,0.5)':'var(--border)' }}>
+                onMouseLeave={e => { e.currentTarget.style.borderColor=tieneOferta?'rgba(16,185,129,0.5)':esGranel?'rgba(14,165,233,0.3)':'var(--border)' }}>
+
+                {/* Badge oferta */}
                 {tieneOferta && (
                   <div style={{ position:'absolute', top:8, right:8, background:'#10b981', color:'white', borderRadius:999, padding:'2px 7px', fontSize:10, fontWeight:800 }}>
                     {oferta.tipo==='porcentaje' ? `-${oferta.valor}%` : '🏷️'}
                   </div>
                 )}
-                <div style={{ fontSize:11, color:'#637a93', marginBottom:4, fontWeight:600, textTransform:'uppercase', letterSpacing:0.5 }}>{ICONOS[p.categoria]||'📦'} {p.categoria}</div>
-                <div style={{ fontSize:14, fontWeight:600, marginBottom:8, lineHeight:1.3, paddingRight: tieneOferta?32:0 }}>{p.nombre}</div>
+                {/* Badge granel */}
+                {esGranel && !tieneOferta && (
+                  <div style={{ position:'absolute', top:8, right:8, background:'rgba(14,165,233,0.2)', color:'#38bdf8', borderRadius:999, padding:'2px 7px', fontSize:10, fontWeight:800 }}>
+                    ⚖️
+                  </div>
+                )}
+
+                <div style={{ fontSize:11, color:'#637a93', marginBottom:4, fontWeight:600, textTransform:'uppercase', letterSpacing:0.5 }}>
+                  {ICONOS[p.categoria]||'📦'} {p.categoria}
+                </div>
+                <div style={{ fontSize:14, fontWeight:600, marginBottom:8, lineHeight:1.3, paddingRight:32 }}>{p.nombre}</div>
                 <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-end' }}>
                   <div>
                     <span style={{ fontSize:17, fontWeight:700, color:'#10b981', fontFamily:'JetBrains Mono,monospace' }}>{fmt(precioFinal)}</span>
+                    {esGranel && <span style={{ fontSize:11, color:'#637a93' }}>/{p.unidad}</span>}
                     {tieneOferta && (
                       <div style={{ fontSize:11, color:'#637a93', textDecoration:'line-through', fontFamily:'JetBrains Mono' }}>{fmt(p.precio)}</div>
                     )}
                   </div>
-                  <span style={{ fontSize:11, color:p.stock<5?'#f59e0b':'#637a93' }}>{p.stock<=0?'Sin stock':`${p.stock} uds`}</span>
+                  <span style={{ fontSize:11, color:p.stock<(esGranel?1:5)?'#f59e0b':'#637a93' }}>
+                    {p.stock<=0 ? 'Sin stock' : esGranel ? `${parseFloat(p.stock).toFixed(1)} ${p.unidad}` : `${p.stock} uds`}
+                  </span>
                 </div>
               </button>
             )
@@ -356,23 +466,40 @@ export default function POS() {
               <p style={{ fontSize:12, opacity:0.6 }}>Agrega productos desde el panel</p>
             </div>
           ) : carrito.map(item => (
-            <div key={item.id} style={{ background:'var(--bg-card)', border:`1px solid ${item.oferta?'rgba(16,185,129,0.2)':'var(--border)'}`, borderRadius:10, padding:'10px 12px', display:'flex', flexDirection:'column', gap:6 }}>
+            <div key={`${item.id}-${item.tipo_venta}`}
+              style={{ background:'var(--bg-card)', border:`1px solid ${item.oferta?'rgba(16,185,129,0.2)':item.tipo_venta==='granel'?'rgba(14,165,233,0.2)':'var(--border)'}`, borderRadius:10, padding:'10px 12px', display:'flex', flexDirection:'column', gap:6 }}>
               <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start' }}>
                 <div style={{ flex:1 }}>
                   <span style={{ fontSize:13, fontWeight:600, lineHeight:1.3 }}>{item.nombre}</span>
                   {item.oferta && <span style={{ marginLeft:6, fontSize:10, background:'rgba(16,185,129,0.15)', color:'#34d399', borderRadius:999, padding:'1px 6px', fontWeight:700 }}>🏷️ OFERTA</span>}
+                  {item.tipo_venta==='granel' && <span style={{ marginLeft:6, fontSize:10, background:'rgba(14,165,233,0.15)', color:'#38bdf8', borderRadius:999, padding:'1px 6px', fontWeight:700 }}>⚖️ GRANEL</span>}
                 </div>
-                <button onClick={() => setCarrito(prev=>prev.filter(i=>i.id!==item.id))} style={{ background:'none', border:'none', cursor:'pointer', color:'#637a93', padding:'0 0 0 8px', fontSize:16 }}>✕</button>
+                <button onClick={() => setCarrito(prev=>prev.filter(i=>!(i.id===item.id&&i.tipo_venta===item.tipo_venta)))} style={{ background:'none', border:'none', cursor:'pointer', color:'#637a93', padding:'0 0 0 8px', fontSize:16 }}>✕</button>
               </div>
               <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center' }}>
-                <div style={{ display:'flex', alignItems:'center', gap:8 }}>
-                  <button onClick={() => cambiarCantidad(item.id,-1)} style={{ width:26, height:26, borderRadius:6, background:'var(--bg-700)', border:'1px solid var(--border)', color:'var(--text)', cursor:'pointer', fontSize:15 }}>−</button>
-                  <span style={{ fontFamily:'JetBrains Mono', fontWeight:600, fontSize:14, minWidth:24, textAlign:'center' }}>{item.cantidad}</span>
-                  <button onClick={() => cambiarCantidad(item.id,1)} style={{ width:26, height:26, borderRadius:6, background:'var(--bg-700)', border:'1px solid var(--border)', color:'var(--text)', cursor:'pointer', fontSize:15 }}>+</button>
-                </div>
+                {item.tipo_venta==='granel' ? (
+                  // Controles granel: -0.1 / peso / +0.1
+                  <div style={{ display:'flex', alignItems:'center', gap:6 }}>
+                    <button onClick={() => cambiarCantidadGranel(item.id, -0.1)}
+                      style={{ width:26, height:26, borderRadius:6, background:'var(--bg-700)', border:'1px solid var(--border)', color:'var(--text)', cursor:'pointer', fontSize:13 }}>−</button>
+                    <span style={{ fontFamily:'JetBrains Mono', fontWeight:600, fontSize:13, minWidth:52, textAlign:'center' }}>
+                      {labelCantidad(item)}
+                    </span>
+                    <button onClick={() => cambiarCantidadGranel(item.id, 0.1)}
+                      style={{ width:26, height:26, borderRadius:6, background:'var(--bg-700)', border:'1px solid var(--border)', color:'var(--text)', cursor:'pointer', fontSize:13 }}>+</button>
+                  </div>
+                ) : (
+                  // Controles unidad: -1 / cantidad / +1
+                  <div style={{ display:'flex', alignItems:'center', gap:8 }}>
+                    <button onClick={() => cambiarCantidad(item.id,-1)} style={{ width:26, height:26, borderRadius:6, background:'var(--bg-700)', border:'1px solid var(--border)', color:'var(--text)', cursor:'pointer', fontSize:15 }}>−</button>
+                    <span style={{ fontFamily:'JetBrains Mono', fontWeight:600, fontSize:14, minWidth:24, textAlign:'center' }}>{item.cantidad}</span>
+                    <button onClick={() => cambiarCantidad(item.id,1)} style={{ width:26, height:26, borderRadius:6, background:'var(--bg-700)', border:'1px solid var(--border)', color:'var(--text)', cursor:'pointer', fontSize:15 }}>+</button>
+                  </div>
+                )}
                 <div style={{ textAlign:'right' }}>
                   <div style={{ fontFamily:'JetBrains Mono', fontWeight:700, fontSize:15, color:'#10b981' }}>{fmt(item.subtotal)}</div>
-                  {item.precioOriginal && <div style={{ fontFamily:'JetBrains Mono', fontSize:10, color:'#637a93', textDecoration:'line-through' }}>{fmt(item.precioOriginal*item.cantidad)}</div>}
+                  {item.tipo_venta==='granel' && <div style={{ fontSize:10, color:'#637a93' }}>{fmt(item.precio)}/{item.unidad}</div>}
+                  {item.precioOriginal && item.tipo_venta!=='granel' && <div style={{ fontFamily:'JetBrains Mono', fontSize:10, color:'#637a93', textDecoration:'line-through' }}>{fmt(item.precioOriginal*item.cantidad)}</div>}
                 </div>
               </div>
             </div>
@@ -419,6 +546,86 @@ export default function POS() {
           </div>
         )}
       </div>
+
+      {/* ── Modal Granel ── */}
+      {modalGranel && (
+        <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.8)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:150 }}>
+          <div style={{ background:'#111d2b', border:'1px solid rgba(14,165,233,0.4)', borderRadius:20, padding:28, width:400, display:'flex', flexDirection:'column', gap:20 }}>
+            <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center' }}>
+              <div>
+                <h2 style={{ fontSize:18, fontWeight:700 }}>⚖️ {modalGranel.nombre}</h2>
+                <p style={{ color:'#637a93', fontSize:13, marginTop:2 }}>
+                  {fmt(precioConOferta(modalGranel))} por {modalGranel.unidad}
+                  {' · '}Stock: {parseFloat(modalGranel.stock).toFixed(2)} {modalGranel.unidad}
+                </p>
+              </div>
+              <button onClick={() => setModalGranel(null)} style={{ background:'none', border:'none', cursor:'pointer', color:'#637a93', fontSize:22 }}>✕</button>
+            </div>
+
+            {/* Input de peso */}
+            <div>
+              <label style={{ fontSize:12, fontWeight:700, color:'#637a93', display:'block', marginBottom:8, textTransform:'uppercase', letterSpacing:0.5 }}>
+                Cantidad ({modalGranel.unidad})
+              </label>
+              <div style={{ position:'relative' }}>
+                <input ref={pesoRef} className="input" type="number" min="0.001" step="0.001"
+                  placeholder={`Ej: 0.500`} value={pesoInput}
+                  onChange={e => setPesoInput(e.target.value)}
+                  onKeyDown={e => { if(e.key==='Enter') agregarGranel() }}
+                  style={{ fontFamily:'JetBrains Mono', fontSize:28, fontWeight:700, textAlign:'right', paddingRight:50 }} />
+                <span style={{ position:'absolute', right:16, top:'50%', transform:'translateY(-50%)', color:'#637a93', fontWeight:700, fontSize:16 }}>
+                  {modalGranel.unidad}
+                </span>
+              </div>
+            </div>
+
+            {/* Accesos rápidos de peso */}
+            <div>
+              <p style={{ fontSize:11, color:'#637a93', marginBottom:8, textTransform:'uppercase', letterSpacing:0.5, fontWeight:700 }}>
+                Pesos rápidos
+              </p>
+              <div style={{ display:'flex', gap:8, flexWrap:'wrap' }}>
+                {PESOS_RAPIDOS.map(p => (
+                  <button key={p} onClick={() => setPesoInput(String(p))} className="btn btn-ghost"
+                    style={{ fontSize:13, padding:'6px 12px' }}>
+                    {p} {modalGranel.unidad}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Preview del total */}
+            {pesoInput && !isNaN(parseFloat(pesoInput)) && parseFloat(pesoInput) > 0 && (
+              <div style={{ background:'rgba(14,165,233,0.08)', border:'1px solid rgba(14,165,233,0.25)', borderRadius:12, padding:'12px 16px', display:'flex', justifyContent:'space-between', alignItems:'center' }}>
+                <div>
+                  <p style={{ fontSize:13, color:'#38bdf8', fontWeight:600 }}>Total a cobrar</p>
+                  <p style={{ fontSize:12, color:'#637a93', marginTop:2 }}>
+                    {parseFloat(pesoInput).toFixed(3)} {modalGranel.unidad} × {fmt(precioConOferta(modalGranel))}
+                  </p>
+                </div>
+                <span style={{ fontFamily:'JetBrains Mono', fontWeight:800, fontSize:22, color:'#38bdf8' }}>
+                  {fmt(precioConOferta(modalGranel) * parseFloat(pesoInput))}
+                </span>
+              </div>
+            )}
+
+            {parseFloat(pesoInput) > modalGranel.stock && (
+              <div style={{ background:'rgba(239,68,68,0.1)', border:'1px solid rgba(239,68,68,0.3)', borderRadius:10, padding:'10px 14px', fontSize:13, color:'#ef4444' }}>
+                ⚠️ No hay suficiente stock. Disponible: {parseFloat(modalGranel.stock).toFixed(2)} {modalGranel.unidad}
+              </div>
+            )}
+
+            <div style={{ display:'flex', gap:12 }}>
+              <button className="btn btn-ghost" style={{ flex:1 }} onClick={() => setModalGranel(null)}>Cancelar</button>
+              <button className="btn btn-primary" style={{ flex:1, background:'#0ea5e9' }}
+                onClick={agregarGranel}
+                disabled={!pesoInput || isNaN(parseFloat(pesoInput)) || parseFloat(pesoInput)<=0 || parseFloat(pesoInput)>modalGranel.stock}>
+                ✓ Agregar al carrito
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Modal Descuento */}
       {modalDescuento && (
@@ -497,8 +704,6 @@ export default function POS() {
               </div>
               <button onClick={() => setModalPago(false)} style={{ background:'none', border:'none', cursor:'pointer', color:'#637a93', fontSize:22 }}>✕</button>
             </div>
-
-            {/* Métodos */}
             <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10 }}>
               {METODOS.map(m => {
                 const isSelected = metodoPago===m.id
@@ -514,8 +719,6 @@ export default function POS() {
                 )
               })}
             </div>
-
-            {/* Efectivo */}
             {metodoPago==='Efectivo' && (
               <div style={{ display:'flex', flexDirection:'column', gap:12 }}>
                 <div>
@@ -535,18 +738,12 @@ export default function POS() {
                 )}
               </div>
             )}
-
-            {/* Yape / Plin */}
             {(metodoPago==='Yape'||metodoPago==='Plin') && (
               <div style={{ display:'flex', flexDirection:'column', alignItems:'center', gap:10 }}>
                 <div style={{ width:120, height:120, background:'white', borderRadius:12, display:'flex', alignItems:'center', justifyContent:'center', fontSize:56 }}>📱</div>
-                <p style={{ textAlign:'center', fontSize:13, color:'#637a93' }}>
-                  Monto exacto: <strong style={{ color:'#34d399', fontFamily:'JetBrains Mono' }}>{fmt(totalConDescuento)}</strong>
-                </p>
+                <p style={{ textAlign:'center', fontSize:13, color:'#637a93' }}>Monto exacto: <strong style={{ color:'#34d399', fontFamily:'JetBrains Mono' }}>{fmt(totalConDescuento)}</strong></p>
               </div>
             )}
-
-            {/* Tarjeta */}
             {metodoPago==='Tarjeta' && (
               <div style={{ background:'rgba(245,158,11,0.08)', border:'1px solid rgba(245,158,11,0.3)', borderRadius:12, padding:'16px 20px', display:'flex', gap:14, alignItems:'center' }}>
                 <span style={{ fontSize:32 }}>💳</span>
@@ -556,21 +753,15 @@ export default function POS() {
                 </div>
               </div>
             )}
-
-            {/* Fiado - precio real sin descuentos */}
             {metodoPago==='Fiado' && (
               <div style={{ display:'flex', flexDirection:'column', gap:12 }}>
                 <div style={{ background:'rgba(239,68,68,0.08)', border:'1px solid rgba(239,68,68,0.25)', borderRadius:12, padding:'12px 16px', fontSize:13, color:'#ef4444' }}>
                   ⚠️ El fiado se cobra al <strong>precio real</strong> — sin descuentos ni ofertas.
                 </div>
-
-                {/* Mostrar precio real */}
                 <div style={{ background:'var(--bg-700)', borderRadius:10, padding:'12px 16px', display:'flex', justifyContent:'space-between', alignItems:'center' }}>
                   <span style={{ fontSize:13, color:'#637a93' }}>Deuda a registrar (precio real)</span>
                   <span style={{ fontFamily:'JetBrains Mono', fontWeight:800, fontSize:18, color:'#ef4444' }}>{fmt(totalFiado)}</span>
                 </div>
-
-                {/* Selector de cliente */}
                 <div style={{ position:'relative' }}>
                   <label style={{ fontSize:12, fontWeight:700, color:'#637a93', display:'block', marginBottom:6 }}>CLIENTE</label>
                   <div style={{ position:'relative' }}>
@@ -598,14 +789,13 @@ export default function POS() {
                     </div>
                   )}
                 </div>
-
                 {clienteSelFiado && (
                   <div style={{ background:'rgba(239,68,68,0.08)', border:'1px solid rgba(239,68,68,0.25)', borderRadius:10, padding:'12px 14px', display:'flex', justifyContent:'space-between', alignItems:'center' }}>
                     <div>
                       <p style={{ fontWeight:700, fontSize:14 }}>📋 {clienteSelFiado.nombre}</p>
                       <p style={{ fontSize:12, color:'#637a93', marginTop:2 }}>
                         {clienteSelFiado.telefono||'Sin teléfono'}
-                        {clienteSelFiado.deuda_total>0 && <span style={{ color:'#ef4444', marginLeft:8 }}>· Deuda actual: {fmt(clienteSelFiado.deuda_total)}</span>}
+                        {clienteSelFiado.deuda_total>0 && <span style={{ color:'#ef4444', marginLeft:8 }}>· Deuda: {fmt(clienteSelFiado.deuda_total)}</span>}
                       </p>
                     </div>
                     <button onClick={() => { setClienteSelFiado(null); setBusquedaCliente('') }} style={{ background:'none', border:'none', cursor:'pointer', color:'#637a93', fontSize:18 }}>✕</button>
@@ -613,17 +803,53 @@ export default function POS() {
                 )}
               </div>
             )}
+            {/* ── Datos del comprador SUNAT (boleta > S/700) ── */}
+            {mostrarComprador && metodoPago && metodoPago !== 'Fiado' && (
+              <div style={{ background:'rgba(14,165,233,0.08)', border:'1px solid rgba(14,165,233,0.25)', borderRadius:12, padding:'14px 16px', display:'flex', flexDirection:'column', gap:12 }}>
+                <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center' }}>
+                  <div>
+                    <p style={{ fontWeight:700, fontSize:13, color:'#38bdf8' }}>📋 Datos del comprador</p>
+                    <p style={{ fontSize:11, color:'#637a93', marginTop:2 }}>Requerido por SUNAT para boletas ≥ S/ 700</p>
+                  </div>
+                  <button type="button" onClick={() => setMostrarComprador(false)}
+                    style={{ background:'none', border:'none', cursor:'pointer', color:'#637a93', fontSize:14 }}>✕</button>
+                </div>
+                <div style={{ display:'flex', flexDirection:'column', gap:10 }}>
+                  <div>
+                    <label style={{ fontSize:11, fontWeight:700, color:'#637a93', display:'block', marginBottom:5, textTransform:'uppercase', letterSpacing:0.5 }}>Nombre / Razón social</label>
+                    <input className="input" placeholder="Ej: Juan Pérez García"
+                      value={compradorNombre} onChange={e => setCompradorNombre(e.target.value)} autoFocus />
+                  </div>
+                  <div>
+                    <label style={{ fontSize:11, fontWeight:700, color:'#637a93', display:'block', marginBottom:5, textTransform:'uppercase', letterSpacing:0.5 }}>DNI / RUC</label>
+                    <input className="input" style={{ fontFamily:'JetBrains Mono' }}
+                      placeholder="Ej: 45678901"
+                      value={compradorDniRuc} onChange={e => setCompradorDniRuc(e.target.value)} />
+                  </div>
+                  <div onClick={() => setGuardarCliente(v => !v)}
+                    style={{ display:'flex', alignItems:'center', gap:10, cursor:'pointer', userSelect:'none', padding:'8px 0' }}>
+                    <div style={{ width:20, height:20, borderRadius:5, border:`2px solid ${guardarCliente?'#10b981':'#637a93'}`, background:guardarCliente?'#10b981':'transparent', display:'flex', alignItems:'center', justifyContent:'center', transition:'all 0.15s', flexShrink:0 }}>
+                      {guardarCliente && <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>}
+                    </div>
+                    <span style={{ fontSize:13, color:'#637a93' }}>Guardar este cliente en la sección Clientes</span>
+                  </div>
+                </div>
+              </div>
+            )}
 
-            {/* Botón confirmar */}
+            {/* Aviso si es boleta > S/700 y no se ha mostrado el formulario */}
+            {!mostrarComprador && metodoPago && metodoPago !== 'Fiado' && (config.tipo_comprobante === 'boleta' || config.tipo_comprobante === 'nota_venta') && totalConDescuento >= 700 && (
+              <button type="button" onClick={() => setMostrarComprador(true)}
+                style={{ background:'rgba(14,165,233,0.08)', border:'1px solid rgba(14,165,233,0.25)', borderRadius:10, padding:'10px 14px', cursor:'pointer', textAlign:'left', fontSize:13, color:'#38bdf8' }}>
+                📋 Agregar datos del comprador (SUNAT requiere DNI/RUC para boletas ≥ S/700)
+              </button>
+            )}
+
             {metodoPago && (
               <button className="btn btn-primary"
                 style={{ width:'100%', padding:'14px', fontSize:16, borderRadius:12, background:metodoActivo?.color }}
                 onClick={handleCobrar}
-                disabled={
-                  cargando ||
-                  (metodoPago==='Efectivo' && (!montoRecibido||isNaN(parseFloat(montoRecibido))||parseFloat(montoRecibido)<totalConDescuento)) ||
-                  (metodoPago==='Fiado' && !clienteSelFiado)
-                }>
+                disabled={cargando||(metodoPago==='Efectivo'&&(!montoRecibido||isNaN(parseFloat(montoRecibido))||parseFloat(montoRecibido)<totalConDescuento))||(metodoPago==='Fiado'&&!clienteSelFiado)}>
                 {cargando ? 'Procesando...' :
                   metodoPago==='Fiado'
                     ? `📋 Registrar fiado — ${fmt(totalFiado)}`

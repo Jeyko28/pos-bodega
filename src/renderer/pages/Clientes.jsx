@@ -3,25 +3,25 @@ import React, { useState, useEffect } from 'react'
 const fmt = (n) => `S/ ${Number(n||0).toFixed(2)}`
 const fmtFecha = (f) => new Date(f).toLocaleDateString('es-PE', { day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit' })
 
-const emptyForm = { nombre:'', telefono:'', referencia:'' }
+const emptyForm = { nombre:'', telefono:'', referencia:'', dni_ruc:'' }
 
 export default function Clientes() {
-  const [clientes, setClientes]       = useState([])
-  const [busqueda, setBusqueda]       = useState('')
+  const [clientes, setClientes]         = useState([])
+  const [busqueda, setBusqueda]         = useState('')
   const [resumenFiado, setResumenFiado] = useState(null)
-  const [modal, setModal]             = useState(null) // 'add'|'edit'|'fiado'|'pagar'
-  const [form, setForm]               = useState(emptyForm)
-  const [editId, setEditId]           = useState(null)
-  const [clienteSel, setClienteSel]   = useState(null)
+  const [modal, setModal]               = useState(null) // 'add'|'edit'|'fiado'|'pagar'
+  const [form, setForm]                 = useState(emptyForm)
+  const [editId, setEditId]             = useState(null)
+  const [clienteSel, setClienteSel]     = useState(null)
   const [fiadoCliente, setFiadoCliente] = useState([])
-  const [guardando, setGuardando]     = useState(false)
-  const [error, setError]             = useState('')
+  const [guardando, setGuardando]       = useState(false)
+  const [error, setError]               = useState('')
   const [confirmDelete, setConfirmDelete] = useState(null)
 
   // Fiado manual
-  const [fiadoForm, setFiadoForm]     = useState({ monto:'', concepto:'' })
+  const [fiadoForm, setFiadoForm] = useState({ monto:'', concepto:'' })
   // Pago
-  const [pagoForm, setPagoForm]       = useState({ fiadoId:null, monto:'' })
+  const [pagoForm, setPagoForm]   = useState({ fiadoId:null, monto:'' })
 
   useEffect(() => { cargar() }, [])
 
@@ -34,15 +34,17 @@ export default function Clientes() {
     setResumenFiado(r)
   }
 
+  // Búsqueda también por DNI/RUC
   const filtrados = clientes.filter(c =>
     c.nombre.toLowerCase().includes(busqueda.toLowerCase()) ||
-    (c.telefono && c.telefono.includes(busqueda))
+    (c.telefono && c.telefono.includes(busqueda)) ||
+    (c.dni_ruc  && c.dni_ruc.includes(busqueda))
   )
 
   function abrirAgregar() { setForm(emptyForm); setEditId(null); setError(''); setModal('add') }
 
   function abrirEditar(c) {
-    setForm({ nombre:c.nombre, telefono:c.telefono||'', referencia:c.referencia||'' })
+    setForm({ nombre:c.nombre, telefono:c.telefono||'', referencia:c.referencia||'', dni_ruc:c.dni_ruc||'' })
     setEditId(c.id); setError(''); setModal('edit')
   }
 
@@ -117,9 +119,9 @@ export default function Clientes() {
       {resumenFiado && (
         <div style={{ padding:'0 24px 16px', flexShrink:0, display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:12 }}>
           {[
-            { label:'Total en fiado', value:fmt(resumenFiado.total_deuda), icon:'📋', color:'#ef4444' },
-            { label:'Clientes con deuda', value:resumenFiado.clientes_deuda, icon:'👥', color:'#f59e0b' },
-            { label:'Cuentas pendientes', value:resumenFiado.total_fiados, icon:'🧾', color:'#637a93' },
+            { label:'Total en fiado',     value:fmt(resumenFiado.total_deuda), icon:'📋', color:'#ef4444' },
+            { label:'Clientes con deuda', value:resumenFiado.clientes_deuda,   icon:'👥', color:'#f59e0b' },
+            { label:'Cuentas pendientes', value:resumenFiado.total_fiados,     icon:'🧾', color:'#637a93' },
           ].map(s => (
             <div key={s.label} style={{ background:'var(--bg-card)', border:'1px solid var(--border)', borderRadius:12, padding:'12px 16px', display:'flex', alignItems:'center', gap:12 }}>
               <span style={{ fontSize:24 }}>{s.icon}</span>
@@ -134,9 +136,9 @@ export default function Clientes() {
 
       {/* Buscador */}
       <div style={{ padding:'0 24px 12px', flexShrink:0 }}>
-        <div style={{ position:'relative', maxWidth:400 }}>
+        <div style={{ position:'relative', maxWidth:440 }}>
           <svg style={{ position:'absolute', left:14, top:'50%', transform:'translateY(-50%)', color:'#637a93' }} width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-          <input className="input" style={{ paddingLeft:40 }} placeholder="Buscar por nombre o teléfono..."
+          <input className="input" style={{ paddingLeft:40 }} placeholder="Buscar por nombre, teléfono o DNI/RUC..."
             value={busqueda} onChange={e => setBusqueda(e.target.value)} />
           {busqueda && <button onClick={() => setBusqueda('')} style={{ position:'absolute', right:12, top:'50%', transform:'translateY(-50%)', background:'none', border:'none', cursor:'pointer', color:'#637a93', fontSize:16 }}>✕</button>}
         </div>
@@ -154,8 +156,8 @@ export default function Clientes() {
             <table style={{ width:'100%', borderCollapse:'collapse' }}>
               <thead>
                 <tr style={{ borderBottom:'1px solid var(--border)' }}>
-                  {['Cliente','Teléfono','Referencia','Deuda','Acciones'].map(h => (
-                    <th key={h} style={{ padding:'12px 16px', textAlign:'left', fontSize:11, fontWeight:700, color:'#637a93', textTransform:'uppercase', letterSpacing:0.6 }}>{h}</th>
+                  {['Cliente','DNI / RUC','Teléfono','Referencia','Deuda','Acciones'].map(h => (
+                    <th key={h} style={{ padding:'12px 16px', textAlign:'left', fontSize:11, fontWeight:700, color:'#637a93', textTransform:'uppercase', letterSpacing:0.6, whiteSpace:'nowrap' }}>{h}</th>
                   ))}
                 </tr>
               </thead>
@@ -172,6 +174,12 @@ export default function Clientes() {
                         </div>
                         <span style={{ fontWeight:600 }}>{c.nombre}</span>
                       </div>
+                    </td>
+                    <td style={{ padding:'12px 16px' }}>
+                      {c.dni_ruc
+                        ? <span style={{ fontFamily:'JetBrains Mono', fontSize:13, color:'var(--text)', fontWeight:600 }}>{c.dni_ruc}</span>
+                        : <span style={{ color:'#3a5068', fontSize:13 }}>—</span>
+                      }
                     </td>
                     <td style={{ padding:'12px 16px', fontFamily:'JetBrains Mono', fontSize:13, color:'#637a93' }}>{c.telefono||'—'}</td>
                     <td style={{ padding:'12px 16px', fontSize:13, color:'#637a93' }}>{c.referencia||'—'}</td>
@@ -201,18 +209,38 @@ export default function Clientes() {
       {/* Modal Agregar/Editar cliente */}
       {(modal==='add'||modal==='edit') && (
         <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.7)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:100 }}>
-          <div style={{ background:'#111d2b', border:'1px solid var(--border)', borderRadius:18, padding:28, width:400, display:'flex', flexDirection:'column', gap:16 }}>
+          <div style={{ background:'#111d2b', border:'1px solid var(--border)', borderRadius:18, padding:28, width:440, display:'flex', flexDirection:'column', gap:16 }}>
             <h2 style={{ fontSize:18, fontWeight:700 }}>{modal==='add' ? 'Nuevo cliente' : 'Editar cliente'}</h2>
+
             <Campo label="Nombre completo" required>
-              <input className="input" placeholder="Ej: María García" value={form.nombre} onChange={e => setForm(f=>({...f,nombre:e.target.value}))} autoFocus />
+              <input className="input" placeholder="Ej: María García"
+                value={form.nombre} onChange={e => setForm(f=>({...f,nombre:e.target.value}))} autoFocus />
             </Campo>
-            <Campo label="Teléfono">
-              <input className="input" placeholder="Ej: 987654321" value={form.telefono} onChange={e => setForm(f=>({...f,telefono:e.target.value}))} style={{ fontFamily:'JetBrains Mono' }} />
-            </Campo>
+
+            <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:14 }}>
+              <Campo label="DNI / RUC">
+                <input className="input" style={{ fontFamily:'JetBrains Mono' }}
+                  placeholder="Ej: 45678901"
+                  value={form.dni_ruc} onChange={e => setForm(f=>({...f,dni_ruc:e.target.value.trim()}))} />
+              </Campo>
+              <Campo label="Teléfono">
+                <input className="input" placeholder="Ej: 987654321"
+                  value={form.telefono} onChange={e => setForm(f=>({...f,telefono:e.target.value}))} style={{ fontFamily:'JetBrains Mono' }} />
+              </Campo>
+            </div>
+
             <Campo label="Referencia / Dirección">
-              <input className="input" placeholder="Ej: Vecino calle Los Pinos" value={form.referencia} onChange={e => setForm(f=>({...f,referencia:e.target.value}))} />
+              <input className="input" placeholder="Ej: Vecino calle Los Pinos"
+                value={form.referencia} onChange={e => setForm(f=>({...f,referencia:e.target.value}))} />
             </Campo>
+
+            {/* Aviso SUNAT */}
+            <div style={{ background:'rgba(14,165,233,0.08)', border:'1px solid rgba(14,165,233,0.2)', borderRadius:10, padding:'10px 14px', fontSize:12, color:'#38bdf8' }}>
+              ℹ️ El DNI/RUC es necesario para boletas de venta que superen S/ 700 (requisito SUNAT).
+            </div>
+
             {error && <div style={{ background:'rgba(239,68,68,0.1)', border:'1px solid rgba(239,68,68,0.3)', borderRadius:10, padding:'10px 14px', fontSize:13, color:'#ef4444' }}>⚠️ {error}</div>}
+
             <div style={{ display:'flex', gap:12 }}>
               <button className="btn btn-ghost" style={{ flex:1 }} onClick={() => setModal(null)}>Cancelar</button>
               <button className="btn btn-primary" style={{ flex:1 }} onClick={guardar} disabled={guardando}>
@@ -228,10 +256,14 @@ export default function Clientes() {
         <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.75)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:100 }}>
           <div style={{ background:'#111d2b', border:'1px solid var(--border)', borderRadius:20, padding:28, width:560, maxHeight:'85vh', display:'flex', flexDirection:'column', gap:16 }}>
 
-            {/* Header */}
             <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center' }}>
               <div>
                 <h2 style={{ fontSize:18, fontWeight:700 }}>📋 Fiado — {clienteSel.nombre}</h2>
+                {clienteSel.dni_ruc && (
+                  <p style={{ fontSize:12, color:'#637a93', marginTop:2, fontFamily:'JetBrains Mono' }}>
+                    DNI/RUC: {clienteSel.dni_ruc}
+                  </p>
+                )}
                 <p style={{ fontSize:13, color: deudaTotal>0 ? '#ef4444' : '#34d399', marginTop:2, fontFamily:'JetBrains Mono', fontWeight:700 }}>
                   {deudaTotal>0 ? `Deuda: ${fmt(deudaTotal)}` : '✓ Sin deuda pendiente'}
                 </p>
@@ -243,14 +275,17 @@ export default function Clientes() {
             <div style={{ background:'var(--bg-700)', borderRadius:12, padding:16, display:'flex', gap:10, alignItems:'flex-end' }}>
               <div style={{ flex:1 }}>
                 <label style={{ fontSize:11, fontWeight:700, color:'#637a93', textTransform:'uppercase', letterSpacing:0.5, display:'block', marginBottom:6 }}>Concepto</label>
-                <input className="input" placeholder="Ej: Abarrotes del día" value={fiadoForm.concepto} onChange={e => setFiadoForm(f=>({...f,concepto:e.target.value}))} />
+                <input className="input" placeholder="Ej: Abarrotes del día"
+                  value={fiadoForm.concepto} onChange={e => setFiadoForm(f=>({...f,concepto:e.target.value}))} />
               </div>
               <div style={{ width:120 }}>
                 <label style={{ fontSize:11, fontWeight:700, color:'#637a93', textTransform:'uppercase', letterSpacing:0.5, display:'block', marginBottom:6 }}>Monto S/</label>
-                <input className="input" type="number" min="0.1" placeholder="0.00" value={fiadoForm.monto} onChange={e => setFiadoForm(f=>({...f,monto:e.target.value}))} style={{ fontFamily:'JetBrains Mono', fontWeight:700 }} />
+                <input className="input" type="number" min="0.1" placeholder="0.00"
+                  value={fiadoForm.monto} onChange={e => setFiadoForm(f=>({...f,monto:e.target.value}))}
+                  style={{ fontFamily:'JetBrains Mono', fontWeight:700 }} />
               </div>
-              <button className="btn btn-primary" style={{ padding:'10px 16px', fontSize:13, flexShrink:0 }} onClick={agregarFiado}
-                disabled={!fiadoForm.monto||parseFloat(fiadoForm.monto)<=0}>
+              <button className="btn btn-primary" style={{ padding:'10px 16px', fontSize:13, flexShrink:0 }}
+                onClick={agregarFiado} disabled={!fiadoForm.monto||parseFloat(fiadoForm.monto)<=0}>
                 + Agregar
               </button>
             </div>
@@ -277,7 +312,6 @@ export default function Clientes() {
                     </div>
                   </div>
 
-                  {/* Barra de progreso pago */}
                   <div style={{ height:4, background:'var(--bg-700)', borderRadius:999, overflow:'hidden', marginBottom:8 }}>
                     <div style={{ height:'100%', borderRadius:999, background: f.estado==='pagado' ? '#10b981' : '#ef4444', width:`${((f.monto_original-f.saldo)/f.monto_original)*100}%` }} />
                   </div>
@@ -289,7 +323,8 @@ export default function Clientes() {
                     {f.estado==='pendiente' && (
                       pagoForm.fiadoId===f.id ? (
                         <div style={{ display:'flex', gap:8, alignItems:'center' }}>
-                          <input className="input" type="number" min="0.1" max={f.saldo} placeholder={`Máx ${fmt(f.saldo)}`}
+                          <input className="input" type="number" min="0.1" max={f.saldo}
+                            placeholder={`Máx ${fmt(f.saldo)}`}
                             value={pagoForm.monto} onChange={e => setPagoForm(p=>({...p,monto:e.target.value}))}
                             style={{ width:120, fontFamily:'JetBrains Mono', fontWeight:700, fontSize:14 }} autoFocus />
                           <button className="btn btn-primary" style={{ padding:'7px 14px', fontSize:13 }} onClick={registrarPago}>✓ Pagar</button>
@@ -304,7 +339,6 @@ export default function Clientes() {
                     )}
                   </div>
 
-                  {/* Pagos realizados */}
                   {f.pagos && f.pagos.length > 0 && (
                     <div style={{ marginTop:10, paddingTop:10, borderTop:'1px solid rgba(30,51,71,0.5)' }}>
                       <p style={{ fontSize:11, color:'#637a93', marginBottom:6, fontWeight:700, textTransform:'uppercase', letterSpacing:0.5 }}>Pagos registrados</p>
@@ -330,7 +364,10 @@ export default function Clientes() {
             <div style={{ fontSize:36 }}>🗑️</div>
             <div>
               <p style={{ fontWeight:700, fontSize:16 }}>Eliminar cliente</p>
-              <p style={{ color:'#637a93', fontSize:13, marginTop:6 }}>¿Eliminar a <strong style={{ color:'var(--text)' }}>{confirmDelete.nombre}</strong>?{confirmDelete.deuda_total>0 && <><br/><span style={{ color:'#ef4444' }}>⚠️ Tiene deuda de {fmt(confirmDelete.deuda_total)}</span></>}</p>
+              <p style={{ color:'#637a93', fontSize:13, marginTop:6 }}>
+                ¿Eliminar a <strong style={{ color:'var(--text)' }}>{confirmDelete.nombre}</strong>?
+                {confirmDelete.deuda_total>0 && <><br/><span style={{ color:'#ef4444' }}>⚠️ Tiene deuda de {fmt(confirmDelete.deuda_total)}</span></>}
+              </p>
             </div>
             <div style={{ display:'flex', gap:10 }}>
               <button className="btn btn-ghost" style={{ flex:1 }} onClick={() => setConfirmDelete(null)}>Cancelar</button>

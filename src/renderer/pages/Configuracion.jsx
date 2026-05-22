@@ -5,13 +5,13 @@ export default function Configuracion() {
   const [config, setConfig]       = useState(null)
   const [guardando, setGuardando] = useState(false)
   const [exito, setExito]         = useState(false)
-  const [abiertos, setAbiertos]   = useState({ negocio:true, tickets:false, alertas:false, datos:false })
+  const [abiertos, setAbiertos]   = useState({ negocio:true, comprobante:false, tickets:false, alertas:false, datos:false })
   const [rutaBD, setRutaBD]       = useState('')
 
   // Estados feedback
-  const [msgBackup, setMsgBackup]   = useState(null) // { tipo:'ok'|'error', texto }
-  const [msgExcel, setMsgExcel]     = useState(null)
-  const [exportando, setExportando] = useState(false)
+  const [msgBackup, setMsgBackup]     = useState(null)
+  const [msgExcel, setMsgExcel]       = useState(null)
+  const [exportando, setExportando]   = useState(false)
   const [restaurando, setRestaurando] = useState(false)
 
   useEffect(() => {
@@ -21,7 +21,12 @@ export default function Configuracion() {
 
   async function cargar() {
     const c = await window.electronAPI.getConfig()
-    setConfig(c)
+    setConfig({
+      tipo_comprobante: 'ticket',
+      regimen:          'nuevo_rus',
+      serie_boleta:     'B001',
+      ...c
+    })
   }
 
   async function guardar() {
@@ -69,27 +74,20 @@ export default function Configuracion() {
     try {
       const carpeta = await window.electronAPI.elegirCarpetaExcel()
       if (!carpeta.success) { setExportando(false); return }
-
       const datos = await window.electronAPI.getDatosExcel({ tipo, dias:365 })
       if (!datos.length) {
         setMsgExcel({ tipo:'error', texto:'No hay datos para exportar' })
         setExportando(false)
         return
       }
-
-      // Crear workbook con XLSX
-      const ws = XLSX.utils.json_to_sheet(datos)
-      const wb = XLSX.utils.book_new()
+      const ws   = XLSX.utils.json_to_sheet(datos)
+      const wb   = XLSX.utils.book_new()
       XLSX.utils.book_append_sheet(wb, ws, tipo.charAt(0).toUpperCase()+tipo.slice(1))
-
-      // Ajustar ancho de columnas
       const cols = Object.keys(datos[0]).map(k => ({ wch: Math.max(k.length, 12) }))
       ws['!cols'] = cols
-
       const nombre  = `${tipo}-${new Date().toISOString().slice(0,10)}.xlsx`
       const rutaXls = `${carpeta.ruta}\\${nombre}`
       XLSX.writeFile(wb, rutaXls)
-
       setMsgExcel({ tipo:'ok', texto:`✓ Excel guardado: ${nombre}` })
     } catch(e) {
       setMsgExcel({ tipo:'error', texto:`Error: ${e.message}` })
@@ -99,6 +97,11 @@ export default function Configuracion() {
   }
 
   if (!config) return <div style={{ padding:24, color:'#637a93' }}>Cargando...</div>
+
+  const tipoComp = config.tipo_comprobante || 'ticket'
+  const regimen  = config.regimen          || 'nuevo_rus'
+  const serie    = config.serie_boleta     || 'B001'
+  const mostrarIGV = tipoComp !== 'ticket' && regimen !== 'nuevo_rus'
 
   return (
     <div style={{ height:'100vh', display:'flex', flexDirection:'column' }}>
@@ -141,6 +144,98 @@ export default function Configuracion() {
           </div>
         </Seccion>
 
+        {/* 📄 Comprobante SUNAT */}
+        <Seccion titulo="📄 Comprobante de Venta (SUNAT)" desc="Tipo de comprobante, régimen tributario y serie"
+          abierto={abiertos.comprobante} onToggle={() => toggle('comprobante')}
+          badge={tipoComp==='boleta'?'Boleta de Venta':tipoComp==='nota_venta'?'Nota de Venta':'Ticket Simple'}>
+
+          {/* Tipo de comprobante */}
+          <div style={{ display:'flex', flexDirection:'column', gap:14 }}>
+            <Campo label="Tipo de comprobante">
+              <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:10 }}>
+                {[
+                  { id:'ticket',     icon:'🧾', label:'Ticket Simple',   desc:'Sin RUC activo. Para negocios en proceso de formalización.' },
+                  { id:'boleta',     icon:'📄', label:'Boleta de Venta', desc:'Con RUC activo. Cumple normas SUNAT. Serie y correlativo automático.' },
+                  { id:'nota_venta', icon:'📋', label:'Nota de Venta',   desc:'Con RUC. Para ventas que no requieren boleta obligatoria.' },
+                ].map(t => {
+                  const isA = tipoComp===t.id
+                  return (
+                    <button key={t.id} type="button" onClick={() => set('tipo_comprobante', t.id)}
+                      style={{ display:'flex', flexDirection:'column', alignItems:'center', gap:6, padding:'14px 10px', borderRadius:12, cursor:'pointer', textAlign:'center',
+                        border: isA ? '2px solid #10b981' : '2px solid var(--border)',
+                        background: isA ? 'rgba(16,185,129,0.1)' : 'var(--bg-card)', transition:'all 0.15s' }}>
+                      <span style={{ fontSize:26 }}>{t.icon}</span>
+                      <span style={{ fontWeight:700, fontSize:13, color:isA?'#34d399':'var(--text)' }}>{t.label}</span>
+                      <span style={{ fontSize:11, color:'#637a93', lineHeight:1.4 }}>{t.desc}</span>
+                    </button>
+                  )
+                })}
+              </div>
+            </Campo>
+
+            {/* Régimen y serie — solo si boleta o nota */}
+            {(tipoComp==='boleta'||tipoComp==='nota_venta') && (
+              <>
+                <Campo label="Régimen tributario">
+                  <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10 }}>
+                    {[
+                      { id:'nuevo_rus', label:'Nuevo RUS',               desc:'Cuota mensual fija. No discrimina IGV.' },
+                      { id:'rer',       label:'Régimen Especial (RER)',   desc:'Discrimina IGV 18% en el ticket.' },
+                      { id:'mype',      label:'Régimen MYPE Tributario',  desc:'Discrimina IGV 18% en el ticket.' },
+                      { id:'general',   label:'Régimen General',          desc:'Discrimina IGV 18% en el ticket.' },
+                    ].map(r => {
+                      const isA = regimen===r.id
+                      return (
+                        <button key={r.id} type="button" onClick={() => set('regimen', r.id)}
+                          style={{ display:'flex', flexDirection:'column', gap:4, padding:'12px 14px', borderRadius:10, cursor:'pointer', textAlign:'left',
+                            border: isA ? '2px solid #10b981' : '2px solid var(--border)',
+                            background: isA ? 'rgba(16,185,129,0.08)' : 'var(--bg-card)', transition:'all 0.15s' }}>
+                          <span style={{ fontWeight:700, fontSize:13, color:isA?'#34d399':'var(--text)' }}>{r.label}</span>
+                          <span style={{ fontSize:11, color:'#637a93' }}>{r.desc}</span>
+                        </button>
+                      )
+                    })}
+                  </div>
+                </Campo>
+
+                <div style={{ display:'grid', gridTemplateColumns:'180px 1fr', gap:14, alignItems:'flex-start' }}>
+                  <Campo label="Serie del comprobante">
+                    <input className="input" maxLength={4}
+                      style={{ fontFamily:'JetBrains Mono', fontWeight:700, fontSize:16, letterSpacing:3 }}
+                      placeholder="B001"
+                      value={config.serie_boleta||'B001'}
+                      onChange={e => set('serie_boleta', e.target.value.toUpperCase())} />
+                    <p style={{ fontSize:11, color:'#637a93', marginTop:4 }}>Ej: B001 boletas · NV01 notas</p>
+                  </Campo>
+                  <div style={{ background:'rgba(16,185,129,0.06)', border:'1px solid rgba(16,185,129,0.2)', borderRadius:10, padding:'12px 14px' }}>
+                    <p style={{ fontSize:11, fontWeight:700, color:'#637a93', marginBottom:6, textTransform:'uppercase', letterSpacing:0.5 }}>Vista previa del número</p>
+                    <p style={{ fontFamily:'JetBrains Mono', fontSize:16, color:'var(--text)', fontWeight:700 }}>
+                      {serie}-00000001
+                    </p>
+                    <p style={{ fontSize:11, color:'#637a93', marginTop:4 }}>El correlativo se incrementa automáticamente con cada venta.</p>
+                  </div>
+                </div>
+
+                {mostrarIGV ? (
+                  <div style={{ background:'rgba(245,158,11,0.08)', border:'1px solid rgba(245,158,11,0.2)', borderRadius:10, padding:'10px 14px', fontSize:13, color:'#f59e0b' }}>
+                    ⚠️ Con este régimen, el IGV (18%) se mostrará desglosado en el ticket. El precio de venta ya incluye el IGV.
+                  </div>
+                ) : (
+                  <div style={{ background:'rgba(16,185,129,0.06)', border:'1px solid rgba(16,185,129,0.15)', borderRadius:10, padding:'10px 14px', fontSize:13, color:'#34d399' }}>
+                    ✓ Nuevo RUS: los precios incluyen IGV pero no se desglosa. El régimen más común para bodegas y minimarkets.
+                  </div>
+                )}
+              </>
+            )}
+
+            {tipoComp==='ticket' && (
+              <div style={{ background:'var(--bg-700)', borderRadius:10, padding:'10px 14px', fontSize:13, color:'#637a93' }}>
+                ℹ️ El ticket simple no tiene obligación tributaria. Incluye nombre del negocio, productos, precios y total. Ideal mientras el negocio está en proceso de formalización.
+              </div>
+            )}
+          </div>
+        </Seccion>
+
         {/* 🖨️ Tickets */}
         <Seccion titulo="🖨️ Configuración de Tickets" desc="Tipo de impresora, contenido y mensaje del comprobante"
           abierto={abiertos.tickets} onToggle={() => toggle('tickets')}
@@ -148,22 +243,26 @@ export default function Configuracion() {
           <div style={{ display:'flex', flexDirection:'column', gap:16 }}>
             <Campo label="Tipo de impresora">
               <div style={{ display:'flex', gap:10 }}>
-                {[{ id:'a4',label:'Hoja A4',icon:'📄',desc:'Impresora normal' },{ id:'80mm',label:'Térmica 80mm',icon:'🖨️',desc:'Recomendada' },{ id:'58mm',label:'Térmica 58mm',icon:'🖨️',desc:'Más compacta' }].map(t => {
-                  const isActive=(config.ticket_tipo||'a4')===t.id
+                {[
+                  { id:'a4',   label:'Hoja A4',     icon:'📄', desc:'Impresora normal' },
+                  { id:'80mm', label:'Térmica 80mm', icon:'🖨️', desc:'Recomendada' },
+                  { id:'58mm', label:'Térmica 58mm', icon:'🖨️', desc:'Más compacta' },
+                ].map(t => {
+                  const isA = config.ticket_tipo===t.id
                   return (
-                    <button key={t.id} onClick={() => set('ticket_tipo',t.id)}
-                      style={{ flex:1, display:'flex', flexDirection:'column', alignItems:'center', gap:6, padding:'14px 10px', borderRadius:12, cursor:'pointer',
-                        border:isActive?'2px solid #10b981':'2px solid var(--border)',
-                        background:isActive?'rgba(16,185,129,0.1)':'var(--bg-700)', transition:'all 0.15s' }}>
+                    <button key={t.id} type="button" onClick={() => set('ticket_tipo', t.id)}
+                      style={{ flex:1, display:'flex', flexDirection:'column', alignItems:'center', gap:4, padding:'12px 8px', borderRadius:10, cursor:'pointer',
+                        border: isA ? '2px solid #10b981' : '2px solid var(--border)',
+                        background: isA ? 'rgba(16,185,129,0.1)' : 'var(--bg-card)', transition:'all 0.15s' }}>
                       <span style={{ fontSize:22 }}>{t.icon}</span>
-                      <span style={{ fontWeight:700, fontSize:13, color:isActive?'#34d399':'var(--text)' }}>{t.label}</span>
+                      <span style={{ fontWeight:700, fontSize:12, color:isA?'#34d399':'var(--text)' }}>{t.label}</span>
                       <span style={{ fontSize:11, color:'#637a93' }}>{t.desc}</span>
                     </button>
                   )
                 })}
               </div>
             </Campo>
-            <Campo label="Mensaje al pie del ticket">
+            <Campo label="Mensaje de despedida">
               <input className="input" placeholder="¡Gracias por su compra! Vuelva pronto 😊"
                 value={config.ticket_mensaje||''} onChange={e => set('ticket_mensaje',e.target.value)} />
             </Campo>
@@ -231,15 +330,14 @@ export default function Configuracion() {
               <p style={{ fontSize:13, color:'#637a93', marginBottom:12 }}>Descarga tus datos en formato Excel (.xlsx) para analizarlos o compartirlos.</p>
               <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10 }}>
                 {[
-                  { tipo:'ventas',   label:'Ventas',   icon:'🧾', desc:'Historial completo' },
-                  { tipo:'productos',label:'Productos', icon:'📦', desc:'Catálogo y stock' },
-                  { tipo:'clientes', label:'Clientes',  icon:'👥', desc:'Lista y deudas' },
-                  { tipo:'fiado',    label:'Fiado',     icon:'📋', desc:'Cuentas por cobrar' },
+                  { tipo:'ventas',    label:'Ventas',   icon:'🧾', desc:'Historial completo' },
+                  { tipo:'productos', label:'Productos', icon:'📦', desc:'Catálogo y stock' },
+                  { tipo:'clientes',  label:'Clientes',  icon:'👥', desc:'Lista y deudas' },
+                  { tipo:'fiado',     label:'Fiado',     icon:'📋', desc:'Cuentas por cobrar' },
                 ].map(e => (
                   <button key={e.tipo} onClick={() => handleExportarExcel(e.tipo)} disabled={exportando}
                     style={{ display:'flex', alignItems:'center', gap:12, padding:'14px 16px', borderRadius:12, cursor:exportando?'wait':'pointer',
-                      background:'var(--bg-700)', border:'1px solid var(--border)', transition:'all 0.15s',
-                      opacity:exportando?0.7:1 }}
+                      background:'var(--bg-700)', border:'1px solid var(--border)', transition:'all 0.15s', opacity:exportando?0.7:1 }}
                     onMouseEnter={e => { if(!exportando) e.currentTarget.style.borderColor='#10b981' }}
                     onMouseLeave={e => { e.currentTarget.style.borderColor='var(--border)' }}>
                     <span style={{ fontSize:26 }}>{e.icon}</span>
@@ -260,7 +358,7 @@ export default function Configuracion() {
         </Seccion>
 
         <p style={{ textAlign:'center', fontSize:12, color:'#3a5068', paddingTop:8 }}>
-          Más opciones disponibles próximamente
+          POS Bodega v1.1 — Más opciones disponibles próximamente
         </p>
       </div>
     </div>

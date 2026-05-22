@@ -1,6 +1,6 @@
 {
   "name": "pos-bodega",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Sistema de Punto de Venta para Bodega",
   "author": "Jeyko28",
   "main": "src/main/main.js",
