@@ -2,6 +2,9 @@ import React, { useState, useEffect } from 'react'
 import { NavLink } from 'react-router-dom'
 import { useSesion } from '../App'
 
+// Versión inyectada por Vite desde package.json
+const APP_VERSION = import.meta.env.VITE_APP_VERSION || '1.1'
+
 export default function Navbar() {
   const { usuario, handleLogout } = useSesion()
   const [alertas, setAlertas]             = useState(0)
@@ -160,7 +163,7 @@ export default function Navbar() {
           <span style={{ fontSize:8, fontWeight:600 }}>Salir</span>
         </button>
 
-        <div style={{ color:'#3a5068', fontSize:9, fontWeight:500 }}>v1.0</div>
+        <div style={{ color:'#3a5068', fontSize:9, fontWeight:500 }}>v{APP_VERSION}</div>
       </div>
 
       {/* Modal logout */}
